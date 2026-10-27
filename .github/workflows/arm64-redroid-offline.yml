@@ -1,0 +1,41 @@
+name: ARM64 redroid offline probe
+on: workflow_dispatch
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    steps:
+      - name: Start isolated ARM container
+        shell: bash
+        run: |
+          set -euo pipefail
+          uname -m
+          test "$(uname -m)" = aarch64
+          grep -qw binder /proc/filesystems || { echo 'binderfs unavailable'; exit 1; }
+          docker pull --platform linux/arm64 redroid/redroid:15.0.0_64only-latest
+          docker run -d --rm --name arm-redroid-probe --network none --privileged \
+            redroid/redroid:15.0.0_64only-latest androidboot.redroid_gpu_mode=guest
+          for i in $(seq 1 120); do
+            if [ "$(docker exec arm-redroid-probe getprop sys.boot_completed 2>/dev/null || true)" = 1 ]; then break; fi
+            sleep 5
+          done
+          test "$(docker exec arm-redroid-probe getprop sys.boot_completed)" = 1
+          docker exec arm-redroid-probe getprop ro.product.cpu.abi
+      - name: Print offline diagnostics
+        if: always()
+        shell: bash
+        run: |
+          uname -a
+          cat /proc/version
+          grep -w binder /proc/filesystems || true
+          ls /dev/binderfs /dev/binder* 2>&1 || true
+          ls /dev/ashmem 2>&1 || true
+          docker exec arm-redroid-probe getprop sys.boot_completed || true
+          docker exec arm-redroid-probe getprop ro.product.cpu.abilist || true
+          docker exec arm-redroid-probe getprop ro.product.cpu.abi || true
+          docker exec arm-redroid-probe getprop ro.build.fingerprint || true
+      - name: Stop disposable container
+        if: always()
+        run: docker stop arm-redroid-probe || true
